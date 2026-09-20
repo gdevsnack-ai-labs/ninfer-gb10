@@ -1,11 +1,27 @@
 # NInfer
 
 > Selected checkpoints. Maximum single-GPU inference performance.
+>
+> **Community fork note (GB10 port):** this branch adds an experimental NVIDIA DGX Spark
+> (GB10, `sm_121a`, aarch64) build target next to the reference RTX 5090 (`sm_120a`) target.
+> See [DGX Spark GB10 port](#dgx-spark-gb10-port) for what changed and measured results.
 
-NInfer is a from-scratch C++/CUDA inference engine for Qwen3.5 Dense and MoE architectures on a
-single NVIDIA GeForce RTX 5090. It runs text, image, and video prompts through a local CLI or
-OpenAI-/Anthropic-compatible HTTP APIs. The runtime is deliberately specialized: one GPU, one
-resident model, and a startup-fixed capacity of one to eight active requests.
+NInfer is a from-scratch C++/CUDA inference engine for Qwen3.5 Dense and MoE architectures.
+NInfer upstream targets a single NVIDIA GeForce RTX 5090. This community fork additionally
+provides experimental NVIDIA DGX Spark GB10 (`sm_121a`, aarch64) support. It runs text, image,
+and video prompts through a local CLI or OpenAI-/Anthropic-compatible HTTP APIs. The runtime is
+deliberately specialized: one GPU, one resident model, and a startup-fixed capacity of one to
+eight active requests.
+
+### Fork status
+
+| Target | Build | Validated | Recommended use |
+|---|---|---|---|
+| RTX 5090 (`sm_120a`) | Upstream | Upstream | All supported profiles |
+| DGX Spark GB10 (`sm_121a`) | This fork | CUDA 13.0 | Qwen3.6-35B-A3B MoE |
+
+For GB10 build instructions and measured results, see
+[DGX Spark GB10 port](#dgx-spark-gb10-port).
 
 Five official artifacts are available. The quick-start commands use Qwen3.8-27B NVFP4.
 
@@ -28,19 +44,30 @@ the weights again.
 
 ## Quick start
 
-NInfer requires 64-bit Linux, an NVIDIA GeForce RTX 5090, a CUDA toolkit supporting `sm_120a`,
-CMake 3.28 or newer, a C++20 host compiler, Ninja, `pkg-config`, FFmpeg development libraries
+NInfer requires 64-bit Linux, an NVIDIA GeForce RTX 5090 (upstream target) or NVIDIA DGX Spark
+GB10 (this fork), a CUDA toolkit supporting the selected target, CMake 3.28 or newer, a C++20 host
+compiler, Ninja, `pkg-config`, FFmpeg development libraries
 (`libavformat`, `libavcodec`, `libavutil`, and `libswscale`), and `libcurl >= 7.85`.
 CUDA 13.1 is the validated development toolkit; CMake does not impose a CUDA version floor.
-The build rejects CUDA architectures other than `sm_120a`.
+The build accepts `sm_120a` and the experimental `sm_121a` GB10 target; other CUDA architectures
+are rejected.
 
 Build the product binaries:
 
 ```bash
-git clone https://github.com/Neroued/ninfer.git
-cd ninfer
+git clone https://github.com/gdevsnack-ai-labs/ninfer-gb10.git
+cd ninfer-gb10
 
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+# RTX 5090
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CUDA_ARCHITECTURES=120a
+
+# DGX Spark GB10
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CUDA_ARCHITECTURES=121a
+
 cmake --build build -j
 ```
 
@@ -240,7 +267,7 @@ and either full or optimized proposal heads.
 
 The product boundary remains intentionally small:
 
-- one RTX 5090 and one resident model per Engine;
+- one GPU (RTX 5090 upstream, DGX Spark GB10 on this fork) and one resident model per Engine;
 - a startup-fixed capacity of one to eight active requests with bounded FIFO ingress;
 - no request preemption, priority/QoS, active-request swapping, weight offload, multi-GPU, or
   distributed serving;
@@ -253,6 +280,59 @@ The product boundary remains intentionally small:
 used by active requests and retained prefixes; `auto` resolves the largest legal capacity at
 startup from the memory remaining after weights while keeping 1 GiB of sizing headroom. Explicit
 capacities remain fixed for the process lifetime.
+
+## DGX Spark GB10 port
+
+Experimental community port to the NVIDIA DGX Spark (GB10: `sm_121`, 48 SMs, 20-core aarch64,
+128 GB unified LPDDR5X at 273 GB/s). Validated with CUDA 13.0 (13.0.88) and driver
+580.178.04 on DGX OS; no CUDA 13.1
+upgrade was required. All GPU objects build as `sm_121a`.
+
+### What changed
+
+- `CMakeLists.txt`: accept `CMAKE_CUDA_ARCHITECTURES=121a` alongside `120a`.
+- `src/models/qwen3_5/program/planning/startup.cpp`: accept compute capability 12.1 at runtime.
+- `src/ops/common/device_sm_count.h` (new): cached `cudaGetDeviceProperties` SM-count query
+  (falls back to 170). Four 170-SM tunings now follow the actual device: GDN chunked output
+  distribution, small-T attention split caps (batch > 1), MoE prefill grid cap, RoPE wave
+  threshold. All formulas reproduce the exact reference values at 170 SMs.
+
+Build on the GB10 with:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=121a
+cmake --build build -j
+```
+
+### Measured results (GB10, single request unless noted)
+
+Qwen3.6-35B-A3B `groupwise-int`, `--kv-dtype int8`, `--max-context 32768`:
+
+| Workload | Setting | Result |
+|---|---|---|
+| Decode, short prompt | `--spec mtp --draft-tokens 3 --lm-head-draft` | 98–111 tok/s, MTP acceptance 46–56% (prompt-dependent), 0–1 fallbacks |
+| Decode, short prompt | no spec | ~65–69 tok/s |
+| Prefill, 6852-token prompt | `--prefill-chunk 1024` (default) | 4.35k tok/s |
+| Prefill, 6852-token prompt | `--prefill-chunk 4096` (recommended on GB10) | 5.31k tok/s |
+| OpenAI API serve, C=2 concurrent | same MTP profile | both requests succeed, 22–28 tok/s each |
+
+Same-prompt A/B against llama.cpp (`Qwen3.6-35B-A3B-Q8_0.gguf`, 6810-token prompt, non-MTP):
+llama.cpp prefill 1612 tok/s / decode 36.8 tok/s vs this port prefill 5310 tok/s /
+decode ~65 tok/s non-spec, ~98–111 tok/s MTP3. Note the quantization differs (Q8 vs
+groupwise-int), so this is a system comparison, not a kernel-only one.
+
+Qwen3.8-27B NVFP4 (dense) for reference: 21–28 tok/s decode with MTP3 on GB10. A lighter
+GGUF (Ridge 3.7bpw, 12.6 GB) under llama.cpp reaches ~30 tok/s on the same machine, so for
+dense 27B serving the lighter-weights engine wins. Dense 27B decode is strongly bandwidth-bound
+on GB10; the lighter 12.6 GB GGUF has a substantial weight-traffic advantage over the 19.7 GB
+NVFP4 artifact, leaving limited headroom for kernel tuning to close the gap. This port is
+positioned for MoE serving, not dense.
+
+Recommendation: use `--prefill-chunk 4096` on GB10. In the measured sweep on a 6852-token
+prompt (1024/2048/4096/full-prompt chunks), 4096 was the best point at 5.31k tok/s versus 4.35k
+at the 1024 default; the 4096-token workspace was about 417 MiB, while a full-prompt chunk did
+not improve throughput. The SM-count retune itself measures within noise
+(±3%) on single-request workloads; it corrects batch>1 and MoE-prefill grid sizing.
 
 ## Documentation
 

@@ -801,8 +801,11 @@ void validate_target_options(const execution::Parameters& parameters, DeviceCont
         }
         break;
     }
-    if (device.compute_capability() != 120) {
-        throw std::invalid_argument("Qwen3.5 family runtime requires compute capability 12.0");
+    // GB10 port: accept compute capability 12.1 (sm_121a) alongside the
+    // reference 12.0 (sm_120a) target. Same consumer-Blackwell mma.sync ISA.
+    if (device.compute_capability() != 120 && device.compute_capability() != 121) {
+        throw std::invalid_argument(
+            "Qwen3.5 family runtime requires compute capability 12.0 or 12.1");
     }
 }
 
