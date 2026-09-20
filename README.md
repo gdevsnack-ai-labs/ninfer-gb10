@@ -55,10 +55,19 @@ are rejected.
 Build the product binaries:
 
 ```bash
-git clone https://github.com/Neroued/ninfer.git
-cd ninfer
+git clone https://github.com/gdevsnack-ai-labs/ninfer-gb10.git
+cd ninfer-gb10
 
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+# RTX 5090
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CUDA_ARCHITECTURES=120a
+
+# DGX Spark GB10
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CUDA_ARCHITECTURES=121a
+
 cmake --build build -j
 ```
 
@@ -275,7 +284,8 @@ capacities remain fixed for the process lifetime.
 ## DGX Spark GB10 port
 
 Experimental community port to the NVIDIA DGX Spark (GB10: `sm_121`, 48 SMs, 20-core aarch64,
-128 GB unified LPDDR5X at 273 GB/s). Validated with CUDA 13.0 / driver 580 on DGX OS; no CUDA 13.1
+128 GB unified LPDDR5X at 273 GB/s). Validated with CUDA 13.0 (13.0.88) and driver
+580.178.04 on DGX OS; no CUDA 13.1
 upgrade was required. All GPU objects build as `sm_121a`.
 
 ### What changed
