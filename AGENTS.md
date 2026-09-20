@@ -29,8 +29,9 @@ approval requirements beyond the user's instructions and the actual execution en
 
 NInfer is a from-scratch C++/CUDA inference engine for maximum single-GPU performance. It implements
 `Qwen3_5ForCausalLM` and `Qwen3_5MoeForCausalLM`; official Qwen3.6/3.8 artifacts and user recipes
-use the same architecture, binding and execution path. The implementation targets `sm_120a` and
-is tuned on NVIDIA GeForce RTX 5090.
+use the same architecture, binding and execution path. The upstream implementation targets
+`sm_120a` and is tuned on NVIDIA GeForce RTX 5090. This fork additionally supports the experimental
+`sm_121a` target on NVIDIA DGX Spark GB10; treat that support as an explicit fork product boundary.
 
 Generation uses one GPU, one resident model, startup-fixed concurrency of one to eight requests,
 bounded FIFO ingress, no active-request preemption, and one compact decode batch per round.
@@ -144,11 +145,11 @@ Read the authority relevant to the current decision; this is not a mandatory rea
 Use `cmake --build <build-dir> -j` by default. Adjust parallelism when actual resource pressure
 causes failures or interferes with the task, and briefly explain why.
 
-Use the selected Python 3.11 interpreter explicitly. On this machine it is
-`/home/neroued/miniconda3/envs/py311/bin/python`; the default shell's `python3` may be a different
-version. Use `python3` only after selecting the maintainer environment or checking its version.
+Use the selected Python 3.11 interpreter explicitly. Select the maintainer environment or check the
+interpreter version before running Python tooling; do not assume a machine-specific absolute path.
 Normal resources are `build/`, `out/qwen3_6_27b.ninfer`, its `.conversion.json` report, and
-`profiles/ncu/`, `profiles/nsys/`, `profiles/bench/`; the local toolchain is CUDA 13.1.
+`profiles/ncu/`, `profiles/nsys/`, `profiles/bench/`. The upstream RTX 5090 path is validated with
+CUDA 13.1; the GB10 fork path is validated with CUDA 13.0.
 Select model artifacts by explicit path, never glob order, modification time, or unqualified
 “latest”. Source checkpoints and large artifacts are prerequisites; download or regenerate them
 only when that work is in scope. Install or upgrade dependencies only when the task needs it.
