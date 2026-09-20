@@ -3,7 +3,9 @@
 ## Product and architecture
 
 NInfer is a C++/CUDA inference engine for maximum single-GPU performance, targeting `sm_120a`
-on NVIDIA GeForce RTX 5090. Choose designs for functional and numerical correctness, clear
+on NVIDIA GeForce RTX 5090. This fork additionally supports the experimental `sm_121a` target on
+NVIDIA DGX Spark GB10; treat that support as an explicit fork product boundary. Choose designs for
+functional and numerical correctness, clear
 ownership, and the performance goal within the requested scope.
 
 It implements `Qwen3_5ForCausalLM` and `Qwen3_5MoeForCausalLM`. Checkpoints and recipe combinations
@@ -63,8 +65,9 @@ The [documentation map](docs/README.md) routes to detailed contracts;
 
 ## Local environment
 
-Use Python 3.11 via `/home/neroued/miniconda3/envs/py311/bin/python` explicitly; use `python3` only
-after selecting the maintainer environment or checking its version.
+Use Python 3.11 via the maintainer environment explicitly; do not assume a machine-specific
+absolute path. Use `python3` only after selecting the maintainer environment or checking its
+version.
 The usual local model is `out/qwen3_8_27b_nvfp4.ninfer`. Select artifacts by explicit path, never glob order,
 modification time, or unqualified “latest”. Source checkpoints and large artifacts are prerequisites;
 download or regenerate them only when that work is in scope.
