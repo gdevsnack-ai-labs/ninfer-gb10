@@ -3,6 +3,7 @@
 #include "ops/softmax_attention/dense/causal_cache/launch.h"
 
 #include "core/paged_kv_storage.h"
+#include "ops/common/device_sm_count.h"
 #include "ops/common/math.h"
 #include "ops/softmax_attention/dense/causal_cache/small_t.cuh"
 #include "ops/softmax_attention/dense/causal_cache/small_t_bf16.cuh"
@@ -226,17 +227,24 @@ std::int32_t causal_attention_split_capacity(std::int32_t q_heads, std::int32_t 
         const int capacity =
             causal_small_t_launch_capacity<CausalD256H24Kv4>(envelope, tokens, cache_storage);
         if (batch_size > 1) {
-            // Keep complete grids within one or two 170-SM waves. Rounding from 160 CTAs
-            // leaves room for the indivisible 4*B group, including B=3/5/6/7.
+            // Keep complete grids within one or two resident waves. One wave is the
+            // largest multiple of 32 at or below the SM count (160 on the reference
+            // RTX 5090, 32 on the 48-SM GB10); the factor-32 rounding leaves room
+            // for the indivisible 4*B group, including B=3/5/6/7.
+            const int sm_count  = device_sm_count();
+            const int one_wave  = std::max(32, (sm_count / 32) * 32);
+            const int two_waves = 2 * one_wave;
             const bool narrow = tokens <= 5;
-            int target_ctas   = 160;
+            int target_ctas   = one_wave;
             if (cache_storage == KvCacheStorage::BFloat16)
-                target_ctas =
-                    narrow || batch_size >= 5 || envelope.max_visible_keys > 4096 ? 320 : 160;
+                target_ctas = narrow || batch_size >= 5 || envelope.max_visible_keys > 4096
+                                  ? two_waves
+                                  : one_wave;
             else if (cache_storage == KvCacheStorage::Int8Group64)
-                target_ctas = narrow || envelope.max_visible_keys > 4096 ? 320 : 160;
+                target_ctas =
+                    narrow || envelope.max_visible_keys > 4096 ? two_waves : one_wave;
             else if (cache_storage == KvCacheStorage::Nvfp4Group16)
-                target_ctas = narrow ? 320 : 160;
+                target_ctas = narrow ? two_waves : one_wave;
             const int grid_limit = div_up(target_ctas, 4 * batch_size);
             // A split stages at most 64 physical-page IDs. Leave two 64-key pages for
             // key-tile rounding and page alignment at the 262144-key resource limit.
