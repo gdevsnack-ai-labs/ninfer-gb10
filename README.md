@@ -292,6 +292,8 @@ Experimental community port to the NVIDIA DGX Spark (GB10: `sm_121`, 48 SMs, 20-
 - `src/models/qwen3_5/program/planning/startup.cpp`: accept compute capability 12.1 at runtime.
 - Upstream now derives launch tuning from the device SM count itself
   (`DeviceExecutionView`), so this fork carries no SM-count patch of its own.
+  The earlier fork-local `device_sm_count.h` approach was dropped on rebase as
+  superseded.
 
 Build on the GB10 with:
 
@@ -300,12 +302,36 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTUR
 cmake --build build -j
 ```
 
-### Measured results (GB10, to be re-validated on this rebase)
+### Measured results (GB10, rebased on upstream `81c8ce0`)
 
-> Previous baseline (pre-rebase): Qwen3.6-35B-A3B `groupwise-int` decode 98–111 tok/s
-> with MTP3, prefill 5.31k tok/s at `--prefill-chunk 4096` on a ~6.8k-token prompt,
-> vs llama.cpp Q8_0 prefill 1612 tok/s / decode 36.8 tok/s on the same prompt.
-> Re-measure after this rebase before publishing.
+Qwen3.6-35B-A3B `groupwise-int`, `--kv-dtype int8`, `--max-context 32768`
+(or 131072 for serve):
+
+| Workload | Setting | Result |
+|---|---|---|
+| Decode, short prompt | `--spec mtp --draft-tokens 3 --lm-head-draft --no-thinking` | 116.7 tok/s, MTP acceptance 58.3% |
+| Prefill, 6852-token prompt | `--prefill-chunk 1024` (default) | 5.09k tok/s |
+| Prefill, 6852-token prompt | `--prefill-chunk 2048` | 5.83k tok/s |
+| Prefill, 6852-token prompt | `--prefill-chunk 4096` (recommended on GB10) | 6.46k tok/s |
+| Prefill, 6852-token prompt | full-prompt chunk | 6.36k tok/s (plateau) |
+| OpenAI API serve, 128k ctx, 6810-token prompt | same MTP profile | prefill 5.76k tok/s, decode 136.3 tok/s, MTP 81.5% |
+
+The rebase (upstream GDN two-stage kernels, attention/linear rework, `DeviceExecutionView`)
+improved GB10 prefill ~20% over the pre-rebase fork (5.31k → 6.46k at chunk 4096) with no
+porting work beyond the two arch-gate lines.
+
+Same-prompt A/B against llama.cpp (`Qwen3.6-35B-A3B-Q8_0.gguf`, 6810-token prompt, non-MTP):
+llama.cpp prefill 1612 tok/s / decode 36.8 tok/s vs this port prefill 6.46k tok/s /
+decode ~78 tok/s non-spec, ~117–136 tok/s MTP3. Note the quantization differs (Q8 vs
+groupwise-int), so this is a system comparison, not a kernel-only one.
+
+Qwen3.8-27B NVFP4 (dense) for reference: 27.5 tok/s decode with MTP3 on GB10 (77.8%
+acceptance, re-validated after rebase). A lighter GGUF (Ridge 3.7bpw, 12.6 GB) under
+llama.cpp reaches ~30 tok/s on the same machine, so for dense 27B serving the
+lighter-weights engine wins. Dense 27B decode is strongly bandwidth-bound on GB10; the
+lighter 12.6 GB GGUF has a substantial weight-traffic advantage over the 19.7 GB NVFP4
+artifact, leaving limited headroom for kernel tuning to close the gap. This port is
+positioned for MoE serving, not dense.
 
 ## Documentation
 
