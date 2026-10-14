@@ -1,11 +1,27 @@
 # NInfer
 
 > Selected checkpoints. Maximum single-GPU inference performance.
+>
+> **Community fork note (GB10 port):** this branch adds an experimental NVIDIA DGX Spark
+> (GB10, `sm_121a`, aarch64) build target next to the reference RTX 5090 (`sm_120a`) target.
+> See [DGX Spark GB10 port](#dgx-spark-gb10-port) for what changed and measured results.
 
-NInfer is a from-scratch C++/CUDA inference engine for Qwen3.5 Dense and MoE architectures on a
-single NVIDIA GeForce RTX 5090. It runs text, image, and video prompts through a local CLI or
-OpenAI-/Anthropic-compatible HTTP APIs. The runtime is deliberately specialized: one GPU, one
-resident model, and one to eight execution lanes fixed at startup.
+NInfer is a from-scratch C++/CUDA inference engine for Qwen3.5 Dense and MoE architectures.
+NInfer upstream targets a single NVIDIA GeForce RTX 5090. This community fork additionally
+provides experimental NVIDIA DGX Spark GB10 (`sm_121a`, aarch64) support. It runs text, image,
+and video prompts through a local CLI or OpenAI-/Anthropic-compatible HTTP APIs. The runtime is
+deliberately specialized: one GPU, one resident model, and one to eight execution lanes fixed
+at startup.
+
+### Fork status
+
+| Target | Build | Validated | Recommended use |
+|---|---|---|---|
+| RTX 5090 (`sm_120a`) | Upstream | Upstream | All supported profiles |
+| DGX Spark GB10 (`sm_121a`) | This fork | CUDA 13.0 | Qwen3.6-35B-A3B MoE |
+
+For GB10 build instructions and measured results, see
+[DGX Spark GB10 port](#dgx-spark-gb10-port).
 
 Five official artifacts are available. The quick-start commands use Qwen3.8-27B NVFP4.
 
@@ -28,19 +44,30 @@ the weights again.
 
 ## Quick start
 
-NInfer requires 64-bit Linux, an NVIDIA GeForce RTX 5090, a CUDA toolkit supporting `sm_120a`,
-CMake 3.28 or newer, a C++20 host compiler, Ninja, `pkg-config`, FFmpeg development libraries
+NInfer requires 64-bit Linux, an NVIDIA GeForce RTX 5090 (upstream target) or NVIDIA DGX Spark
+GB10 (this fork), a CUDA toolkit supporting the selected target, CMake 3.28 or newer, a C++20 host
+compiler, Ninja, `pkg-config`, FFmpeg development libraries
 (`libavformat`, `libavcodec`, `libavutil`, and `libswscale`), and `libcurl >= 7.85`.
 CUDA 13.1 is the validated development toolkit; CMake does not impose a CUDA version floor.
-The build rejects CUDA architectures other than `sm_120a`.
+The build accepts `sm_120a` and the experimental `sm_121a` GB10 target; other CUDA architectures
+are rejected.
 
 Build the product binaries:
 
 ```bash
-git clone https://github.com/Neroued/ninfer.git
-cd ninfer
+git clone https://github.com/gdevsnack-ai-labs/ninfer-gb10.git
+cd ninfer-gb10
 
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+# RTX 5090
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CUDA_ARCHITECTURES=120a
+
+# DGX Spark GB10
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CUDA_ARCHITECTURES=121a
+
 cmake --build build -j
 ```
 
@@ -239,7 +266,7 @@ and either full or optimized proposal heads.
 
 The product boundary remains intentionally small:
 
-- one RTX 5090 and one resident model per Engine;
+- one GPU (RTX 5090 upstream, DGX Spark GB10 on this fork) and one resident model per Engine;
 - one to eight resident execution lanes with bounded FIFO ingress;
 - resource-pressure preemption with snapshot or token-replay recovery;
 - no priority/QoS, weight offload, multi-GPU, or distributed serving;
@@ -252,6 +279,33 @@ The product boundary remains intentionally small:
 used by active requests and retained prefixes; `auto` resolves the largest legal capacity at
 startup from the memory remaining after weights while keeping 1 GiB of sizing headroom. Explicit
 capacities remain fixed for the process lifetime.
+
+## DGX Spark GB10 port
+
+Experimental community port to the NVIDIA DGX Spark (GB10: `sm_121`, 48 SMs, 20-core aarch64,
+128 GB unified LPDDR5X at 273 GB/s). Validated with CUDA 13.0 (13.0.88) and driver
+580.178.04 on DGX OS; no CUDA 13.1 upgrade was required. All GPU objects build as `sm_121a`.
+
+### What changed
+
+- `CMakeLists.txt`: accept `CMAKE_CUDA_ARCHITECTURES=121a` alongside `120a`.
+- `src/models/qwen3_5/program/planning/startup.cpp`: accept compute capability 12.1 at runtime.
+- Upstream now derives launch tuning from the device SM count itself
+  (`DeviceExecutionView`), so this fork carries no SM-count patch of its own.
+
+Build on the GB10 with:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=121a
+cmake --build build -j
+```
+
+### Measured results (GB10, to be re-validated on this rebase)
+
+> Previous baseline (pre-rebase): Qwen3.6-35B-A3B `groupwise-int` decode 98–111 tok/s
+> with MTP3, prefill 5.31k tok/s at `--prefill-chunk 4096` on a ~6.8k-token prompt,
+> vs llama.cpp Q8_0 prefill 1612 tok/s / decode 36.8 tok/s on the same prompt.
+> Re-measure after this rebase before publishing.
 
 ## Documentation
 
